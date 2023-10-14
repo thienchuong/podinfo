@@ -1,0 +1,55 @@
+name: deploy nonprod
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+
+# One workflow running at a time
+concurrency: build_and_push
+
+jobs:
+  build_and_push:
+    uses: thienchuong/reusable-workflows/.github/workflows/build-and-push.yml@v6
+    with:
+      PROJECT: podinfo
+      SERVICE: podinfo
+      DOCKER_TARGET: release
+      DOCKER_PATH: ./docker/Dockerfile
+    secrets: inherit
+
+  deploy:
+    needs: build_and_push
+    strategy:
+      matrix:
+        include:
+          - dispatch_repo: argocd-apps
+            dispatch_event: deploy-dev
+            service: podinfo
+
+          - dispatch_repo: another-argocd-apps
+            dispatch_event: deploy-staging
+            service: podinfo
+    uses: thienchuong/reusable-workflows/.github/workflows/deploy-nonprod.yml@v6
+    with:
+      IMAGE_TAG: ${{ needs.build_and_push.outputs.IMAGE_TAG }}
+      SERVICE: ${{ matrix.service }}
+      SLACK_USER_ID: ${{ needs.build_and_push.outputs.SLACK_USER_ID }}
+      DISPATCH_REPO: thienchuong/${{ matrix.dispatch_repo }}
+      DISPATCH_EVENT: ${{ matrix.dispatch_event }}
+    secrets: inherit
+
+    - name: Deploy dispatch
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.ORG_CI_TS_TOKEN }}
+          repository: ${{ inputs.DISPATCH_REPO }}
+          event-type: ${{ inputs.DISPATCH_EVENT }}
+          client-payload: |-
+            {
+            "repo": "${{ steps.prepare.outputs.repo }}",
+            "service": "${{ steps.prepare.outputs.service }}",
+            "image_tag": "${{ steps.prepare.outputs.image_tag }}"
+            }
